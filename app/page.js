@@ -4,11 +4,45 @@ import { useEffect, useState, useRef } from 'react';
 
 const emptyForm = { name: '', description: '', price: '', image_url: '' };
 
+// Fungsi kompresi gambar ke Base64 agar hemat database dan tidak perlu storage server
+function compressImageToBase64(file, maxWidth = 800, quality = 0.8) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.readAsDataURL(file);
+    reader.onload = (event) => {
+      const img = new Image();
+      img.src = event.target.result;
+      img.onload = () => {
+        let width = img.width;
+        let height = img.height;
+
+        if (width > maxWidth) {
+          height = Math.round((height * maxWidth) / width);
+          width = maxWidth;
+        }
+
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0, width, height);
+
+        // Kompresi ke format JPEG
+        const compressedDataUrl = canvas.toDataURL('image/jpeg', quality);
+        resolve(compressedDataUrl);
+      };
+      img.onerror = (err) => reject(err);
+    };
+    reader.onerror = (err) => reject(err);
+  });
+}
+
 export default function Home() {
   const [products, setProducts] = useState([]);
   const [form, setForm] = useState(emptyForm);
-  const [imageFile, setImageFile] = useState(null);
   const [imagePreview, setImagePreview] = useState('');
+  const [fileName, setFileName] = useState('');
   const [uploadMode, setUploadMode] = useState('file'); // 'file' | 'url'
   const [editingId, setEditingId] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -45,23 +79,29 @@ export default function Home() {
     }
   }
 
-  function handleFileChange(e) {
+  async function handleFileChange(e) {
     const file = e.target.files?.[0];
     if (file) {
       if (!file.type.startsWith('image/')) {
         setError('Harap pilih file gambar (JPG, PNG, GIF, WebP)');
         return;
       }
-      setImageFile(file);
-      const previewUrl = URL.createObjectURL(file);
-      setImagePreview(previewUrl);
+
       setError('');
+      try {
+        setFileName(file.name);
+        const base64Data = await compressImageToBase64(file);
+        setImagePreview(base64Data);
+        setForm((prev) => ({ ...prev, image_url: base64Data }));
+      } catch (err) {
+        setError('Gagal memproses gambar: ' + err.message);
+      }
     }
   }
 
   function handleRemoveImage() {
-    setImageFile(null);
     setImagePreview('');
+    setFileName('');
     setForm((prev) => ({ ...prev, image_url: '' }));
     if (fileInputRef.current) {
       fileInputRef.current.value = '';
@@ -76,7 +116,7 @@ export default function Home() {
       price: product.price,
       image_url: product.image_url || '',
     });
-    setImageFile(null);
+    setFileName('');
     setImagePreview(product.image_url || '');
     if (fileInputRef.current) {
       fileInputRef.current.value = '';
@@ -87,7 +127,7 @@ export default function Home() {
   function cancelEdit() {
     setEditingId(null);
     setForm(emptyForm);
-    setImageFile(null);
+    setFileName('');
     setImagePreview('');
     if (fileInputRef.current) {
       fileInputRef.current.value = '';
@@ -100,31 +140,11 @@ export default function Home() {
     setError('');
 
     try {
-      let finalImageUrl = form.image_url;
-
-      // Jika pengguna memilih file baru, upload terlebih dahulu
-      if (imageFile) {
-        const formData = new FormData();
-        formData.append('file', imageFile);
-
-        const uploadRes = await fetch('/api/upload', {
-          method: 'POST',
-          body: formData,
-        });
-
-        const uploadData = await uploadRes.json();
-        if (!uploadRes.ok) {
-          throw new Error(uploadData.error || 'Gagal mengupload gambar');
-        }
-
-        finalImageUrl = uploadData.url;
-      }
-
       const payload = {
         name: form.name,
         description: form.description,
         price: form.price,
-        image_url: finalImageUrl ? finalImageUrl.trim() : null,
+        image_url: form.image_url ? form.image_url.trim() : null,
       };
 
       const url = editingId ? `/api/products/${editingId}` : '/api/products';
@@ -140,7 +160,7 @@ export default function Home() {
       if (!res.ok) throw new Error(data.error || 'Gagal menyimpan data');
 
       setForm(emptyForm);
-      setImageFile(null);
+      setFileName('');
       setImagePreview('');
       setEditingId(null);
       if (fileInputRef.current) {
@@ -227,7 +247,7 @@ export default function Home() {
           {/* Bagian Upload / Gambar */}
           <div className="form-row">
             <label>Gambar Produk</label>
-            
+
             <div className="upload-tab-buttons">
               <button
                 type="button"
@@ -255,7 +275,7 @@ export default function Home() {
                   onChange={handleFileChange}
                   className="file-input"
                 />
-                <p className="hint">Mendukung format PNG, JPG, WebP, GIF (Maks 5MB)</p>
+                <p className="hint">Mendukung format PNG, JPG, WebP, GIF</p>
               </div>
             ) : (
               <div className="url-upload-box">
@@ -294,11 +314,11 @@ export default function Home() {
                     }}
                   />
                 </div>
-                {editingId && !imageFile && (
+                {editingId && !fileName && (
                   <p className="preview-note">ℹ️ Gambar saat ini. Pilih file baru untuk menggantinya.</p>
                 )}
-                {imageFile && (
-                  <p className="preview-note success">✓ File siap diunggah saat disimpan: <strong>{imageFile.name}</strong></p>
+                {fileName && (
+                  <p className="preview-note success">✓ Gambar siap disimpan ({fileName})</p>
                 )}
               </div>
             )}
